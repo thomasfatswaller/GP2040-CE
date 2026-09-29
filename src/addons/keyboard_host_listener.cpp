@@ -138,7 +138,7 @@ void KeyboardHostListener::process_kbd_report(
     } else if (analogRight && !analogLeft) {
         _keyboard_host_state.lx = GAMEPAD_JOYSTICK_MAX;
     } else {
-        _keyboard_host_state.lx = GAMEPAD_JOYSTICK_CENTER;
+        _keyboard_host_state.lx = GAMEPAD_JOYSTICK_MID;
     }
 
     if (analogUp && !analogDown) {
@@ -146,6 +146,6 @@ void KeyboardHostListener::process_kbd_report(
     } else if (analogDown && !analogUp) {
         _keyboard_host_state.ly = GAMEPAD_JOYSTICK_MAX;
     } else {
-        _keyboard_host_state.ly = GAMEPAD_JOYSTICK_CENTER;
+        _keyboard_host_state.ly = GAMEPAD_JOYSTICK_MID;
     }
 }

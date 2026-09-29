@@ -3182,8 +3182,8 @@ std::string getBoardDefinition() {
 
     JsonArray availablePins = picoPins.createNestedArray("availablePins");
     for (Pin_t pin = 0; pin < (Pin_t)NUM_BANK0_GPIOS; pin++) {
-        if (!(pin < static_cast<int32_t>(ADC_BASE_PIN) || pin >= ADC_BASE_PIN + NUM_ADC_CHANNELS - 1)) analogPins.add(pin);
-        availablePins.add(pin);
+        if (!(pin < static_cast<int32_t>(ADC_BASE_PIN) || pin >= static_cast<int32_t>(ADC_BASE_PIN + NUM_ADC_CHANNELS - 1))) analogPins.add(pin);
+	availablePins.add(pin);
     }
 
     JsonObject usedPins = picoPins.createNestedObject("usedPins");
