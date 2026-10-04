@@ -5,70 +5,7 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
-  #  pull_request_target:
-  #    branches: [ "main" ]
   workflow_dispatch:
-    inputs:
-      board_config:
-        description: "Board configuration to build (leave empty to build all)"
-        required: false
-        type: choice
-        options:
-          - ""
-          - ARCController
-          - ASiLVLABC
-          - ASiLVLWASD
-          - Blank
-          - Pico
-          - PicoW
-          - Pico2
-          - BentoBox
-          - FlatboxRev4
-          - FlatboxRev5
-          - FlatboxRev5RGB
-          - FlatboxRev5USBPassthrough
-          - FlatboxRev5Southpaw
-          - FlatboxRev8
-          - Granola
-          - GranolaBeacon
-          - AdafruitKB2040
-          - KeyboardConverter
-          - Haute42COSMOX
-          - Haute42COSMOXCAS
-          - Haute42COSMOXCAT
-          - Haute42COSMOXMLite
-          - Haute42COSMOXMUltra
-          - Haute42COSMOXXAnalog
-          - Liatris
-          - MavercadeRev1
-          - MavercadeRev2
-          - MavercadeRev3
-          - MiSTercadeV2
-          - OpenCore0
-          - OpenCore0MIXUP
-          - OpenCore0WASD
-          - OSUMGP-RP2040
-          - PicoFightingBoard
-          - PimoroniPicoPlus2
-          - PXPGamepad
-          - ReflexCtrlGenesis6
-          - ReflexCtrlNES
-          - ReflexCtrlSaturn
-          - ReflexCtrlSNES
-          - ReflexCtrlVB
-          - ReflexEncodeV1.2
-          - ReflexEncodeV2.0
-          - RP2040AdvancedBreakoutBoard
-          - RP2040AdvancedBreakoutBoardUSBPassthrough
-          - RP2040MiniBreakoutBoard
-          - RP2040MiniBreakoutBoardUSBPassthrough
-          - SeeedXIAORP2040
-          - SparkFunProMicro
-          - SparkFunProMicroRP2350
-          - WaveshareZero
-          - WaveshareRP2350BPlusW
-          - SGFDevices
-          - ZeroRhythm
 
 env:
   BUILD_TYPE: Release
@@ -76,34 +13,25 @@ env:
 jobs:
   call-node-workflow:
     uses: ./.github/workflows/node.js.yml
-  build-config-list:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v6.0.1
-      - id: set-matrix
-        run: |
-          CONFIG_DIRS=$(ls -d ./configs/*/ | cut -f3 -d'/' | jq -R -s -c 'split("\n")[:-1]')
-          echo "matrix=$CONFIG_DIRS" >> $GITHUB_OUTPUT
+
   build:
-    needs: [call-node-workflow, build-config-list]
-    # The CMake configure and build commands are platform agnostic and should work equally well on Windows or Mac.
-    # You can convert this to a matrix build if you need cross-platform coverage.
-    # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+    needs: [call-node-workflow]
     runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         GP2040_BOARDCONFIG: ["PicoW"]
+
     steps:
       - name: Setup cmake
         uses: jwlawson/actions-setup-cmake@v2
         with:
           cmake-version: "3.31.x"
+
       - name: Verify cmake
         run: cmake --version
 
-      #Global Setup
+      # Global Setup
       - name: Checkout GP2040-CE
         uses: actions/checkout@v6.0.1
         with:
@@ -132,12 +60,18 @@ jobs:
 
       - name: Get core count
         id: core_count
-        run: cat /proc/cpuinfo  | grep processor | wc -l
-        #End Global Setup
+        run: cat /proc/cpuinfo | grep processor | wc -l
 
       - name: Pico Build Configure CMake
         shell: bash
-        run: PICO_SDK_PATH=${{github.workspace}}/pico-sdk GP2040_BOARDCONFIG=${{ matrix.GP2040_BOARDCONFIG }} SKIP_WEBBUILD=TRUE cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_C_FLAGS="-Wno-error" -DCMAKE_CXX_FLAGS="-Wno-error"
+        run: |
+          PICO_SDK_PATH=${{github.workspace}}/pico-sdk \
+          GP2040_BOARDCONFIG=${{ matrix.GP2040_BOARDCONFIG }} \
+          SKIP_WEBBUILD=TRUE \
+          cmake -B ${{github.workspace}}/build \
+            -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
+            -DCMAKE_C_FLAGS="-Wno-error" \
+            -DCMAKE_CXX_FLAGS="-Wno-error"
 
       - name: Pico Build
         shell: bash
@@ -149,11 +83,4 @@ jobs:
           name: GP2040-CE - ${{ matrix.GP2040_BOARDCONFIG }}
           path: ${{github.workspace}}/build/GP2040-CE_*_${{ matrix.GP2040_BOARDCONFIG }}.uf2
           if-no-files-found: error
-
-      - name: Upload .elf Artifact
-        if: ${{ matrix.GP2040_BOARDCONFIG == 'Pico'}}
-        uses: actions/upload-artifact@v6.0.0
-        with:
-          name: elf
-          path: ${{github.workspace}}/build/GP2040-CE_*_${{ matrix.GP2040_BOARDCONFIG }}.elf
-          if-no-files-found: error
+	  
