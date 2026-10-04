@@ -103,6 +103,7 @@ void KeyboardHostListener::process() {
         gamepad->auxState.sensors.mouse.z = mouseZ;
         mouseActive = false;
     } else if(mouseResetNextTimer < getMillis()) {
+        // Since mouse position reports only happen when the mouse is moved, we need to reset the position manually
        _keyboard_host_state.lx = joystickMid;
        _keyboard_host_state.ly = joystickMid;
        _keyboard_host_state.rx = joystickMid;
@@ -112,8 +113,10 @@ void KeyboardHostListener::process() {
 }
 
 void KeyboardHostListener::mount(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len) {
+    // Interface protocol (hid_interface_protocol_enum_t)
     uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
 
+    // tuh_hid_report_received_cb() will be invoked when report is available
     if (_keyboard_host_mounted == false && itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
         _keyboard_host_mounted = true;
         _keyboard_dev_addr = dev_addr;
@@ -142,9 +145,11 @@ void KeyboardHostListener::unmount(uint8_t dev_addr) {
 }
 
 void KeyboardHostListener::report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len){
-  if ( _keyboard_host_mounted == false && _mouse_host_mounted == false )
+  // do nothing if we haven't mounted
+if ( _keyboard_host_mounted == false && _mouse_host_mounted == false )
     return;
 
+  // tuh_hid_report_received_cb() will be invoked when report is available
   if ( _keyboard_host_mounted == true && _keyboard_dev_addr == dev_addr && _keyboard_instance == instance ) {
     process_kbd_report(dev_addr, (hid_keyboard_report_t const*) report );
   } else if ( _mouse_host_mounted == true && _mouse_dev_addr == dev_addr && _mouse_instance == instance) {
@@ -170,6 +175,7 @@ uint8_t KeyboardHostListener::getKeycodeFromModifier(uint8_t modifier) {
 void KeyboardHostListener::preprocess_report()
 {
   _keyboard_host_state.buttons = 0;
+  // --- preprocess only select analog movements --- // (by Pelsin)
   if (mouseMovementMode == MOUSE_MOVEMENT_LEFT_ANALOG) {
     _keyboard_host_state.lx = joystickMid;
     _keyboard_host_state.ly = joystickMid;
@@ -186,87 +192,54 @@ void KeyboardHostListener::preprocess_report()
   _keyboard_host_state.rt = 0;
 }
 
+// convert hid keycode to ascii and print via usb device CDC (ignore non-printable)
 void KeyboardHostListener::process_kbd_report(uint8_t dev_addr, hid_keyboard_report_t const *report)
 {
   preprocess_report();
+  // move this preprocess dpad reset only to kbd_report (so as to not have it run on mouse input, by Fran89)
   _keyboard_host_state.dpad = 0;
 
-  bool analogUp    = false;
-  bool analogLeft  = false;
-  bool analogDown  = false;
-  bool analogRight = false;
-
-  for(uint8_t i = 0; i < 14; i++)
+  // make this 14 instead of 7 to include modifier bitfields from hid_keyboard_modifier_bm_t
+  for(uint8_t i=0; i<14; i++)
   {
     uint8_t keycode = 0;
     if (i < 6) {
+        // process keycodes normally
         keycode = report->keycode[i];
     } else {
-        keycode = getKeycodeFromModifier(report->modifier & static_cast<uint8_t>(1 << (i - 6)));
+        // keycode modifiers are bitfields, so the old getKeycodeFromModifier switch approach doesn't work
+        // keycode = getKeycodeFromModifier(report->modifier);
+        // new approach masks the modifier bit to determine which keys are pressed
+        keycode = getKeycodeFromModifier(report->modifier & (1 << (i - 6)));
     }
-
     if ( keycode )
     {
-      const uint16_t key16 = static_cast<uint16_t>(keycode);
-
-      // --- ESDF / A1-A4 INTERCEPTION ---
-      if (_keyboard_host_mapButtonA1.isAssigned() && key16 == static_cast<uint16_t>(_keyboard_host_mapButtonA1.key)) {
-          analogUp = true;
-          continue;
-      }
-      if (_keyboard_host_mapButtonA2.isAssigned() && key16 == static_cast<uint16_t>(_keyboard_host_mapButtonA2.key)) {
-          analogLeft = true;
-          continue;
-      }
-      if (_keyboard_host_mapButtonA3.isAssigned() && key16 == static_cast<uint16_t>(_keyboard_host_mapButtonA3.key)) {
-          analogDown = true;
-          continue;
-      }
-      if (_keyboard_host_mapButtonA4.isAssigned() && key16 == static_cast<uint16_t>(_keyboard_host_mapButtonA4.key)) {
-          analogRight = true;
-          continue;
-      }
-
-      // --- REGULÄRES MAPPING ---
       _keyboard_host_state.dpad |=
-            ((key16 == static_cast<uint16_t>(_keyboard_host_mapDpadUp.key))    ? _keyboard_host_mapDpadUp.buttonMask    : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapDpadDown.key))  ? _keyboard_host_mapDpadDown.buttonMask  : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapDpadLeft.key))  ? _keyboard_host_mapDpadLeft.buttonMask  : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapDpadRight.key)) ? _keyboard_host_mapDpadRight.buttonMask : 0U)
+            ((keycode == _keyboard_host_mapDpadUp.key)    ? _keyboard_host_mapDpadUp.buttonMask : _keyboard_host_state.dpad)
+          | ((keycode == _keyboard_host_mapDpadDown.key)  ? _keyboard_host_mapDpadDown.buttonMask : _keyboard_host_state.dpad)
+          | ((keycode == _keyboard_host_mapDpadLeft.key)  ? _keyboard_host_mapDpadLeft.buttonMask  : _keyboard_host_state.dpad)
+          | ((keycode == _keyboard_host_mapDpadRight.key) ? _keyboard_host_mapDpadRight.buttonMask : _keyboard_host_state.dpad)
         ;
 
-      _keyboard_host_state.buttons |=
-            ((key16 == static_cast<uint16_t>(_keyboard_host_mapButtonB1.key)) ? _keyboard_host_mapButtonB1.buttonMask : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapButtonB2.key)) ? _keyboard_host_mapButtonB2.buttonMask : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapButtonB3.key)) ? _keyboard_host_mapButtonB3.buttonMask : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapButtonB4.key)) ? _keyboard_host_mapButtonB4.buttonMask : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapButtonL1.key)) ? _keyboard_host_mapButtonL1.buttonMask : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapButtonR1.key)) ? _keyboard_host_mapButtonR1.buttonMask : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapButtonL2.key)) ? _keyboard_host_mapButtonL2.buttonMask : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapButtonR2.key)) ? _keyboard_host_mapButtonR2.buttonMask : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapButtonS1.key)) ? _keyboard_host_mapButtonS1.buttonMask : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapButtonS2.key)) ? _keyboard_host_mapButtonS2.buttonMask : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapButtonL3.key)) ? _keyboard_host_mapButtonL3.buttonMask : 0U)
-          | ((key16 == static_cast<uint16_t>(_keyboard_host_mapButtonR3.key)) ? _keyboard_host_mapButtonR3.buttonMask : 0U)
+        _keyboard_host_state.buttons |=
+            ((keycode == _keyboard_host_mapButtonB1.key)  ? _keyboard_host_mapButtonB1.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonB2.key)  ? _keyboard_host_mapButtonB2.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonB3.key)  ? _keyboard_host_mapButtonB3.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonB4.key)  ? _keyboard_host_mapButtonB4.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonL1.key)  ? _keyboard_host_mapButtonL1.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonR1.key)  ? _keyboard_host_mapButtonR1.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonL2.key)  ? _keyboard_host_mapButtonL2.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonR2.key)  ? _keyboard_host_mapButtonR2.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonS1.key)  ? _keyboard_host_mapButtonS1.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonS2.key)  ? _keyboard_host_mapButtonS2.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonL3.key)  ? _keyboard_host_mapButtonL3.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonR3.key)  ? _keyboard_host_mapButtonR3.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonA1.key)  ? _keyboard_host_mapButtonA1.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonA2.key)  ? _keyboard_host_mapButtonA2.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonA3.key)  ? _keyboard_host_mapButtonA3.buttonMask  : _keyboard_host_state.buttons)
+          | ((keycode == _keyboard_host_mapButtonA4.key)  ? _keyboard_host_mapButtonA4.buttonMask  : _keyboard_host_state.buttons)
         ;
     }
-  }
-
-  // --- ANALOGSTICK SOCD CLEANING ---
-  if (analogLeft && !analogRight) {
-      _keyboard_host_state.lx = GAMEPAD_JOYSTICK_MIN;
-  } else if (analogRight && !analogLeft) {
-      _keyboard_host_state.lx = GAMEPAD_JOYSTICK_MAX;
-  } else {
-      _keyboard_host_state.lx = joystickMid;
-  }
-
-  if (analogUp && !analogDown) {
-      _keyboard_host_state.ly = GAMEPAD_JOYSTICK_MIN;
-  } else if (analogDown && !analogUp) {
-      _keyboard_host_state.ly = GAMEPAD_JOYSTICK_MAX;
-  } else {
-      _keyboard_host_state.ly = joystickMid;
   }
 }
 
@@ -279,12 +252,14 @@ void KeyboardHostListener::process_mouse_report(uint8_t dev_addr, hid_mouse_repo
 {
   preprocess_report();
 
+  //------------- button state  -------------//
   _keyboard_host_state.buttons |=
       (report->buttons & MOUSE_BUTTON_LEFT   ?   mouseLeftMapping : _keyboard_host_state.buttons)
     | (report->buttons & MOUSE_BUTTON_MIDDLE ? mouseMiddleMapping : _keyboard_host_state.buttons)
     | (report->buttons & MOUSE_BUTTON_RIGHT  ?  mouseRightMapping : _keyboard_host_state.buttons)
   ;
 
+  //------------- cursor movement -------------//
   mouseX = report->x;
   mouseY = report->y;
   mouseZ = report->wheel;
@@ -295,6 +270,7 @@ void KeyboardHostListener::process_mouse_report(uint8_t dev_addr, hid_mouse_repo
   }
 
   mouseResetNextTimer = getMillis() + mouseResetMS;
+  //-------- report correct analog move --------// (by Pelsin)
   if (mouseMovementMode == MOUSE_MOVEMENT_LEFT_ANALOG) {
     _keyboard_host_state.lx = scaleMouseToJoystick(report->x);
     _keyboard_host_state.ly = scaleMouseToJoystick(report->y);
@@ -302,4 +278,5 @@ void KeyboardHostListener::process_mouse_report(uint8_t dev_addr, hid_mouse_repo
     _keyboard_host_state.rx = scaleMouseToJoystick(report->x);
     _keyboard_host_state.ry = scaleMouseToJoystick(report->y);
   }
+
 }
